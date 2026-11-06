@@ -14,7 +14,7 @@
  * 本文件由 scripts/build.mjs 从 src/ 拼接生成，请改 src/ 而不是这里。
  */
 window.__ModuleLoader__.load({
-	id: "dsh-sci-plot",
+	id: "@blowga/dsh-sci-plot",
 	factory: (require) => {
 		var module = { exports: {} };
 		var exports = module.exports;

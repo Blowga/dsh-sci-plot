@@ -1,6 +1,6 @@
 {
 	"name": "@blowga/dsh-sci-plot",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "科研绘图：红外 / XRD 原始数据导入、交互式 SVG 绘图（缩放、读数、竖线比对、求导）、PNG/SVG 导出。Scientific plotting panel for DeepSeek Harness.",
 	"icon": "./icon.svg",
 	"type": "module",
@@ -34,10 +34,7 @@
 		},
 		"client": {
 			"platform": "web",
-			"inject": [
-				"@deepseek-ai/dsh-client-locale",
-				"@deepseek-ai/dsh-client-runtime"
-			]
+			"inject": []
 		}
 	},
 	"scripts": {

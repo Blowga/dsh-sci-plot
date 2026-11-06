@@ -6,5 +6,5 @@
 # `name` 必须是 node_modules 里能解析到的包名，改了 package.json 的 name
 # 就要同步改这里，否则启动时 resolve 失败。
 - insert:
-    - id: dsh-sci-plot
+    - id: "@blowga/dsh-sci-plot"
       name: "@blowga/dsh-sci-plot"
