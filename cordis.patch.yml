@@ -1,0 +1,10 @@
+# dsh-sci-plot bundle patch layer.
+#
+# 硬约束：同一 entry id 只能出现一次，否则报
+# `duplicate loader entry id`，整棵插件树启动失败。
+#
+# `name` 必须是 node_modules 里能解析到的包名，改了 package.json 的 name
+# 就要同步改这里，否则启动时 resolve 失败。
+- insert:
+    - id: "@blowga/dsh-sci-plot"
+      name: "@blowga/dsh-sci-plot"

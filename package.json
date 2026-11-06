@@ -1,0 +1,68 @@
+{
+	"name": "@blowga/dsh-sci-plot",
+	"version": "0.1.1",
+	"description": "科研绘图：红外 / XRD 原始数据导入、交互式 SVG 绘图（缩放、读数、竖线比对、求导）、PNG/SVG 导出。Scientific plotting panel for DeepSeek Harness.",
+	"icon": "./icon.svg",
+	"type": "module",
+	"main": "lib/index.js",
+	"exports": {
+		".": "./lib/index.js",
+		"./client": "./lib/client.js",
+		"./icon": "./icon.svg",
+		"./locale/en.json": "./locale/en.json",
+		"./locale/zh.json": "./locale/zh.json",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"lib/",
+		"src/",
+		"scripts/",
+		"test/",
+		"cordis.patch.yml",
+		"icon.svg",
+		"locale/",
+		"README.md",
+		"README.zh.md",
+		"LICENSE"
+	],
+	"dsh": {
+		"bundle": {
+			"patch": "./cordis.patch.yml"
+		},
+		"engines": {
+			"dsh": ">=0.2.0-rc.2"
+		},
+		"client": {
+			"platform": "web",
+			"inject": []
+		}
+	},
+	"scripts": {
+		"build": "node scripts/build.mjs",
+		"check": "node --check lib/index.js && node --check lib/client.js",
+		"test": "node test/pure.test.mjs",
+		"prepublishOnly": "node scripts/build.mjs && node --check lib/index.js && node --check lib/client.js && node test/pure.test.mjs"
+	},
+	"keywords": [
+		"dsh",
+		"deepseek-harness",
+		"plugin",
+		"plot",
+		"xrd",
+		"ftir",
+		"spectroscopy",
+		"scientific"
+	],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Blowga/dsh-sci-plot.git"
+	},
+	"homepage": "https://github.com/Blowga/dsh-sci-plot",
+	"bugs": {
+		"url": "https://github.com/Blowga/dsh-sci-plot/issues"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
