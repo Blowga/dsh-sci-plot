@@ -51,7 +51,7 @@ Not supported: Excel workbooks, instrument binaries (`.raw`, `.rasx`, `.jip`, `.
 
 ## Reading pasted paths
 
-Dragging a file uses the browser File API and never touches the host. Pasting a path goes through a loopback-only, same-origin-checked read route on the host, restricted to the user's home directory by default. Override with `DSH_SCI_PLOT_ROOTS`, semicolon separated:
+Dragging a file uses the browser File API and never touches the host. Pasting a path goes through a loopback-only, same-origin-checked read route on the host, open to every mounted drive root by default (the loopback + same-origin fence is what keeps other pages out). Point it at an explicit allow-list with `DSH_SCI_PLOT_ROOTS`, semicolon separated:
 
 ```bash
 DSH_SCI_PLOT_ROOTS="D:\\data;E:\\measurements"

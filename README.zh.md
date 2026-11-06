@@ -49,7 +49,7 @@ dsh plugin --profile <profile> install @blowga/dsh-sci-plot
 
 ## 路径导入的读取范围
 
-拖拽走浏览器 File API，完全不经过 host。粘贴路径走 host 上一条只读路由：仅限本机回环、校验同源，默认只允许用户主目录下的文件。用环境变量 `DSH_SCI_PLOT_ROOTS` 覆盖，分号分隔：
+拖拽走浏览器 File API，完全不经过 host。粘贴路径走 host 上一条只读路由：仅限本机回环、校验同源，默认对本机所有已挂载的盘符根开放（拦住其他页面的是回环 + 同源校验）。要收成白名单，用环境变量 `DSH_SCI_PLOT_ROOTS` 指定，分号分隔：
 
 ```bash
 DSH_SCI_PLOT_ROOTS="D:\\data;E:\\measurements"
