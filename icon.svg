@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Scientific plot panel">
+	<g fill="none" stroke="#5B7C99" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+		<path d="M13 10v42h41" />
+		<path d="M19 41c4.4 0 4.4-13 8.8-13s4.4 8.6 8.2 5.4S42.4 23 48 25.4" />
+	</g>
+	<g fill="#C08B7A">
+		<circle cx="48" cy="25.4" r="2.6" />
+	</g>
+</svg>
