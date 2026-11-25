@@ -49,6 +49,14 @@ The parser does not assume a header row. It scans for the longest run of lines t
 
 Not supported: Excel workbooks, instrument binaries (`.raw`, `.rasx`, `.jip`, `.opju`), multi-column selection beyond picking a pair in code.
 
+## Standard XRD cards (ICDD / PDF)
+
+In the XRD screen, switch the segmented control above the plot area to **标准卡片**. Files imported while it is on are parsed as powder-diffraction cards instead of ordinary two-column spectra.
+
+Card tables carry a `( h k l)` column, so `(` and `1)` are not numbers. The normal parser requires *every* non-empty cell of a row to be numeric and therefore rejects each of them; the card parser only requires the *leading* run of numeric cells to be at least two long and ignores the rest of the row. The intensity is taken from a header that names an intensity column when one exists, otherwise from the third leading number — PDF cards are laid out `2θ d I(f) (hkl) θ 1/(2d) 2π/d n²`.
+
+Each card renders as a stick pattern rather than a polyline. Its intensity is relative, so on import the store rescales the card to roughly 16% of the data's Y span and stacks it below the spectra. Each card carries two dashed horizontal lines across the plot: drag the top one to change the card's height, drag the bottom one to move the whole card; the Y-offset field in the right panel still works for fine tuning.
+
 ## Reading pasted paths
 
 Dragging a file uses the browser File API and never touches the host. Pasting a path goes through a loopback-only, same-origin-checked read route on the host, open to every mounted drive root by default (the loopback + same-origin fence is what keeps other pages out). Point it at an explicit allow-list with `DSH_SCI_PLOT_ROOTS`, semicolon separated:

@@ -9,7 +9,8 @@
  *
  * 面板内部分两屏：卡片首页（红外 FTIR / XRD）→ 绘图页（左侧一列操作按钮 +
  * 中间 SVG 画布 + 右侧曲线/竖线/轴参数）。没有 host 端状态，全部数据活在这个
- * React 树里；刷新即清空是刻意取舍（用户未选持久化）。
+ * React 树里；需要留下的字段（screen / frameId / datasets / guides / view /
+ * axis / tool / selected）由 localStorage 承接，键见 20-store 的 STORAGE_KEY。
  *
  * 本文件由 scripts/build.mjs 从 src/ 拼接生成，请改 src/ 而不是这里。
  */
@@ -93,6 +94,19 @@ window.__ModuleLoader__.load({
 			".sp_toolSep{height:1px;margin:5px 6px;background:var(--dsw-alias-border-l1,#2b2b36)}",
 
 			".sp_stage{flex:1;min-width:0;display:flex;flex-direction:column;box-sizing:border-box;padding:10px 12px 6px}",
+			// ---------- 导入模式分段按钮（绘图区正上方，仅 XRD 帧） ----------
+			".sp_modeRow{flex:0 0 auto;display:flex;justify-content:center;align-items:center;padding:0 0 8px}",
+			".sp_modeSeg{display:inline-flex;align-items:stretch;border-radius:999px;overflow:hidden;",
+			"border:1px solid var(--dsw-alias-border-l1,#2b2b36);background:var(--dsw-alias-bg-layer-1,#1b1b22)}",
+			".sp_modeSeg > button{border:0;background:transparent;color:var(--dsw-alias-label-secondary,#9a9aa8);",
+			"font:inherit;font-size:12px;line-height:1.35;padding:5px 18px;cursor:pointer;",
+			"transition:background .12s ease,color .12s ease}",
+			".sp_modeSeg > button:hover{color:var(--dsw-alias-label-primary,#e4e4ec)}",
+			".sp_modeSeg > button:first-child{border-radius:999px 0 0 999px}",
+			".sp_modeSeg > button:last-child{border-radius:0 999px 999px 0}",
+			".sp_modeSeg > button + button{border-left:1px solid var(--dsw-alias-border-l1,#2b2b36)}",
+			".sp_modeSeg > button.sp_modeSegOn{background:var(--dsw-alias-brand-primary,#3b82f6);color:#fff}",
+			".sp_modeSeg > button.sp_modeSegOn:hover{color:#fff;filter:brightness(1.06)}",
 			".sp_plotBox{position:relative;flex:1;min-height:0;display:flex;align-items:stretch;justify-content:center}",
 			".sp_svg{display:block;width:100%;height:100%;user-select:none;-webkit-user-select:none;touch-action:none}",
 			".sp_svg text{pointer-events:none}",
@@ -105,7 +119,11 @@ window.__ModuleLoader__.load({
 			".sp_secTitle{font-size:11.5px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;",
 			"color:var(--dsw-alias-label-secondary,#9a9aa8)}",
 			".sp_row{display:flex;align-items:center;gap:6px;padding:3px 0}",
-			".sp_swatch{width:13px;height:13px;flex:0 0 13px;border-radius:3px;border:1px solid #00000033;cursor:pointer}",
+			".sp_swatch{position:relative;width:13px;height:13px;flex:0 0 13px;border-radius:3px;border:1px solid #00000033;cursor:pointer}",
+			".sp_swatchMark{position:absolute;right:1px;bottom:1px;width:4px;height:4px;background:#fff;opacity:.9;",
+			"clip-path:polygon(100% 0,100% 100%,0 100%)}",
+			".sp_colorHidden{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;",
+			"pointer-events:none}",
 			".sp_dsname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;",
 			"cursor:pointer}",
 			".sp_dsname[data-off=\"1\"]{opacity:.42}",

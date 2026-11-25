@@ -30,12 +30,61 @@
 			return best;
 		}
 
+		/** 分割线命中容差（像素）：线本身只有 1px，上下 ±5 都算命中。 */
+		const SPLIT_HIT_TOLERANCE = 5;
+		/** 拖上线时与下线保留的最小像素间隔，免两条线叠在一起后点不中。 */
+		const SPLIT_MIN_GAP = 6;
+
+		/**
+		 * 哪条卡片分割线被指到了。分割线没有 data-interactive（导出要留着它们），
+		 * 所以命中靠几何位置算，不靠 DOM 事件。
+		 *
+		 * @returns {null | {id: string, edge: "bottom"|"top", pyBase: number,
+		 *   pyTop: number, offset: number}}
+		 */
+		function hitCardSplit(px, py, view, axis, datasets, offsets) {
+			const box = plotBox();
+			if (px < box.left || px > box.left + box.width) return null;
+			if (py < box.top || py > box.top + box.height) return null;
+			const scales = makeScales(view, axis);
+			const list = datasets || [];
+			let best = null;
+			let bestDistance = SPLIT_HIT_TOLERANCE;
+			for (let i = 0; i < list.length; i++) {
+				const item = list[i];
+				if (item === null || typeof item !== "object") continue;
+				if (item.kind !== "card" || item.visible === false) continue;
+				const offset = (offsets && offsets[i]) || 0;
+				const split = cardSplitGeometry(offset, item.cardHeight || 0, scales);
+				if (split === null) continue;
+				const hit = { id: item.id, edge: "bottom", pyBase: split.pyBase, pyTop: split.pyTop, offset };
+				const bottomDistance = Math.abs(split.pyBase - py);
+				if (bottomDistance <= bestDistance) {
+					bestDistance = bottomDistance;
+					best = hit;
+				}
+				const topDistance = Math.abs(split.pyTop - py);
+				if (topDistance < bestDistance) {
+					bestDistance = topDistance;
+					best = Object.assign({}, hit, { edge: "top" });
+				}
+			}
+			return best;
+		}
+
 		function bindStageEvents(svg, svgRef, stateRef, offsetsRef, viewRef, dispatch) {
 			let mode = null;
 			let guideId = null;
 			let startPx = 0;
 			let startPy = 0;
 			let startView = null;
+			let splitId = null;
+			let splitEdge = null;
+			let splitStartPy = 0;
+			let splitBasePy = NaN;
+			let splitTopPy = NaN;
+			let splitValue = 0;
+			let splitGroup = null;
 
 			const onWheel = (event) => {
 				const state = stateRef.current;
@@ -83,6 +132,23 @@
 				) {
 					return;
 				}
+				const split = hitCardSplit(local.px, local.py, view, state.axis, state.datasets, offsetsRef.current);
+				if (split !== null) {
+					// 分割线优先于平移 / 框选 / 竖线：抓住就先吃掉这次按下，
+					// preventDefault 让后面的 pan 分支不再被触发。
+					mode = "cardSplit";
+					splitId = split.id;
+					splitEdge = split.edge;
+					splitStartPy = local.py;
+					splitBasePy = split.pyBase;
+					splitTopPy = split.pyTop;
+					splitValue = split.offset;
+					splitGroup = svg.querySelector(`[data-card="${split.id}"]`);
+					svg.setPointerCapture(event.pointerId);
+					svg.style.cursor = "ns-resize";
+					event.preventDefault();
+					return;
+				}
 				const target = hitGuide(local.px, view, state.axis, state.guides);
 				if (target !== null) {
 					mode = "guide";
@@ -114,6 +180,33 @@
 				const view = viewRef.current;
 				const box = plotBox();
 				const local = toLocal(svg, event);
+
+				if (mode === "cardSplit" && splitId !== null) {
+					if (splitGroup === null) return;
+					if (splitEdge === "bottom") {
+						// 下线 = 基线：整张卡片（竖线 + 两条线）一起平移，所以直接挪组。
+						const py = clamp(local.py, box.top, box.top + box.height);
+						splitGroup.setAttribute("transform", `translate(0 ${fmt(py - splitStartPy)})`);
+						return;
+					}
+					// 上线 = 顶部：底线不动，只改高度。竖线组以基线为原点做 Y 缩放。
+					const py = Math.max(Math.min(local.py, splitBasePy - SPLIT_MIN_GAP), box.top);
+					const topLine = splitGroup.querySelector('[data-split="top"]');
+					if (topLine) {
+						topLine.setAttribute("y1", String(py));
+						topLine.setAttribute("y2", String(py));
+					}
+					const sticks = splitGroup.querySelector("[data-sticks]");
+					const span = splitBasePy - splitTopPy;
+					if (sticks && span > 0) {
+						const k = Math.round(((splitBasePy - py) / span) * 10000) / 10000;
+						sticks.setAttribute(
+							"transform",
+							`translate(0 ${splitBasePy}) scale(1 ${k}) translate(0 ${-splitBasePy})`
+						);
+					}
+					return;
+				}
 
 				if (mode === "pan" && startView !== null) {
 					const dx = ((local.px - startPx) / box.width) * (startView.xHi - startView.xLo);
@@ -166,6 +259,8 @@
 					return;
 				}
 
+				const hoverSplit = hitCardSplit(local.px, local.py, view, state.axis, state.datasets, offsetsRef.current);
+				svg.style.cursor = hoverSplit === null ? "" : "ns-resize";
 				updateCross(svg, state, view, offsetsRef.current, local, box);
 			};
 
@@ -175,7 +270,34 @@
 				const box = plotBox();
 				const local = toLocal(svg, event);
 
-				if (mode === "guide" && guideId !== null) {
+				if (mode === "cardSplit" && splitId !== null) {
+					if (splitGroup !== null) {
+						// 松手前把拖动期的临时几何清掉，再写回 state；两条线由 React
+						// 按新值重画，不清会留下一次手动 setAttribute 的残影。
+						splitGroup.removeAttribute("transform");
+						const sticks = splitGroup.querySelector("[data-sticks]");
+						if (sticks) sticks.removeAttribute("transform");
+						const topLine = splitGroup.querySelector('[data-split="top"]');
+						if (topLine && Number.isFinite(splitTopPy)) {
+							topLine.setAttribute("y1", String(splitTopPy));
+							topLine.setAttribute("y2", String(splitTopPy));
+						}
+					}
+					const scales = makeScales(view, state.axis);
+					if (splitEdge === "bottom") {
+						const py = clamp(local.py, box.top, box.top + box.height);
+						const value = scales.iy(py);
+						if (Number.isFinite(value)) {
+							dispatch({ type: "PATCH_DATASET", id: splitId, patch: { yOffset: value, offsetMode: "manual" } });
+						}
+					} else {
+						const py = Math.max(Math.min(local.py, splitBasePy - SPLIT_MIN_GAP), box.top);
+						const height = scales.iy(py) - splitValue;
+						if (Number.isFinite(height) && height > 0) {
+							dispatch({ type: "PATCH_DATASET", id: splitId, patch: { cardHeight: height } });
+						}
+					}
+				} else if (mode === "guide" && guideId !== null) {
 					const scales = makeScales(view, state.axis);
 					const px = clamp(local.px, box.left, box.left + box.width);
 					dispatch({ type: "PATCH_GUIDE", id: guideId, patch: { x: scales.ix(px) } });
@@ -206,6 +328,12 @@
 				mode = null;
 				guideId = null;
 				startView = null;
+				splitId = null;
+				splitEdge = null;
+				splitGroup = null;
+				splitBasePy = NaN;
+				splitTopPy = NaN;
+				splitValue = 0;
 				svg.style.cursor = "";
 				try {
 					svg.releasePointerCapture(event.pointerId);
@@ -217,6 +345,7 @@
 			const onLeave = () => {
 				const cross = svg.querySelector("[data-cross]");
 				if (cross) cross.setAttribute("opacity", "0");
+				if (mode === null) svg.style.cursor = "";
 			};
 
 			const onDoubleClick = () => {
@@ -291,6 +420,7 @@
 					const offset = offsets[index] || 0;
 					index += 1;
 					if (item.visible === false) continue;
+					if (item.kind === "card") continue; // 卡片是离散峰，插值读数没有意义
 					const read = valueAt(item.xs, item.ys, dataX);
 					if (!Number.isFinite(read.y)) continue;
 					const py = scales.sy(read.y + offset);
@@ -316,6 +446,7 @@
 			const lines = [`X = ${fmt(dataX)}`];
 			for (const item of state.datasets) {
 				if (item.visible === false) continue;
+				if (item.kind === "card") continue; // 卡片是离散峰，插值读数没有意义
 				const read = valueAt(item.xs, item.ys, dataX);
 				if (!Number.isFinite(read.y)) continue;
 				lines.push(`${item.name}: ${fmt(read.y)}`);

@@ -173,6 +173,8 @@
 			const stageRef = react.useRef(null);
 			const [pathText, setPathText] = react.useState("");
 			const [busy, setBusy] = react.useState(false);
+			const [cardMode, setCardMode] = react.useState(false);
+			const isXrd = frame !== null && frame.id === "xrd";
 
 			const offsets = liveOffsets(state.datasets);
 			const auto = computeAutoView(state.datasets, offsets, state.axis.reverseX);
@@ -278,8 +280,8 @@
 				if (busy) return;
 				setBusy(true);
 				try {
-					const result = await readFileEntries(files);
-					loadInto(state, dispatch, result);
+					const result = await readFileEntries(files, cardMode);
+					loadInto(state, dispatch, result, cardMode);
 				} finally {
 					setBusy(false);
 				}
@@ -294,8 +296,8 @@
 				if (busy) return;
 				setBusy(true);
 				try {
-					const result = await readPathEntries(paths);
-					loadInto(state, dispatch, result);
+					const result = await readPathEntries(paths, cardMode);
+					loadInto(state, dispatch, result, cardMode);
 					if (result.ok.length > 0) setPathText("");
 				} finally {
 					setBusy(false);
@@ -329,6 +331,45 @@
 				h(
 					"div",
 					{ className: "sp_stage" },
+					isXrd
+						? h(
+								"div",
+								{
+									className: "sp_modeRow",
+									title:
+										"当前模式决定拖入 / 粘贴进来的文件按什么解析：" +
+										(cardMode
+											? "标准卡片（ICDD / PDF 卡片，跳过 (hkl) 等非数字列，画成竖线）"
+											: "常规数据（两列 X / Y 数值表）")
+								},
+								h(
+									"div",
+									{ className: "sp_modeSeg", role: "group", "aria-label": "导入解析模式" },
+									h(
+										"button",
+										{
+											type: "button",
+											className: "sp_modeSegBtn" + (cardMode ? "" : " sp_modeSegOn"),
+											title: "常规数据：两列（或多列）X / Y 数值表",
+											"aria-pressed": !cardMode,
+											onClick: () => setCardMode(false)
+										},
+										"常规数据"
+									),
+									h(
+										"button",
+										{
+											type: "button",
+											className: "sp_modeSegBtn" + (cardMode ? " sp_modeSegOn" : ""),
+											title: "标准卡片：ICDD / PDF 卡片文本，按峰位画竖线",
+											"aria-pressed": cardMode,
+											onClick: () => setCardMode(true)
+										},
+										"标准卡片"
+									)
+								)
+							)
+						: null,
 					h(
 						"div",
 						{
@@ -407,16 +448,80 @@
 		//#endregion
 
 		//#region ui — app root
+		// 持久化的纯逻辑（序列化 / 校验）在 20-store，这里只包 localStorage 读写。
+		function safeStorage() {
+			try {
+				if (typeof window === "undefined" || !window.localStorage) return null;
+				return window.localStorage;
+			} catch (error) {
+				return null; // 隐私模式或被策略禁用
+			}
+		}
+
+		/** @returns {object|null} 只在首次挂载时同步调用，避免先渲染一帧空白首页。 */
+		function loadPersistedState() {
+			const store = safeStorage();
+			if (store === null) return null;
+			try {
+				return deserializeState(store.getItem(STORAGE_KEY));
+			} catch (error) {
+				return null;
+			}
+		}
+
+		/** @returns {"ok"|"light"|"failed"|"unavailable"} */
+		function savePersistedState(state) {
+			const store = safeStorage();
+			if (store === null) return "unavailable";
+			try {
+				store.setItem(STORAGE_KEY, serializeState(state));
+				return "ok";
+			} catch (error) {
+				/* QuotaExceededError：转降级写法 */
+			}
+			try {
+				// 只留视图与配色，丢掉 xs / ys —— 总比整个状态丢掉好。
+				store.setItem(STORAGE_KEY, serializeState(state, { light: true }));
+				return "light";
+			} catch (error) {
+				return "failed";
+			}
+		}
+
 		function SciPlotApp() {
-			const [state, setState] = react.useState(initialState);
+			// 惰性初始化：第一帧就是恢复后的状态，不会先闪一下首页。
+			const [state, setState] = react.useState(() => {
+				const restored = loadPersistedState();
+				return restored === null ? initialState : restored;
+			});
 			const dispatch = react.useCallback((action) => {
 				setState((previous) => reducer(previous, action));
 			}, []);
+			const warned = react.useRef(false);
 			react.useEffect(() => {
 				if (!state.notice) return undefined;
 				const timer = setTimeout(() => dispatch({ type: "CLEAR_NOTICE" }), 4600);
 				return () => clearTimeout(timer);
 			}, [state.notice]);
+			// 防抖 400ms：拖拽 / 缩放是每帧 dispatch，不能每帧写存储。
+			// 依赖只列需要持久化的字段 —— 提示条的增删不会触发一次写盘。
+			react.useEffect(() => {
+				const timer = setTimeout(() => {
+					const result = savePersistedState(state);
+					if (result !== "light" && result !== "failed") return;
+					if (warned.current) return;
+					warned.current = true;
+					dispatch({
+						type: "NOTICE",
+						tone: "warn",
+						text:
+							result === "light"
+								? "数据太大未能完整保存，只保留了视图与配色；曲线数据下次需要重新导入。"
+								: "面板状态未能写入本机存储，关闭后需要重新导入。"
+					});
+				}, 400);
+				return () => clearTimeout(timer);
+			}, [state.screen, state.frameId, state.datasets, state.guides, state.view, state.axis, state.tool, state.selected]);
 			if (state.screen === "home") return h(HomeScreen, { dispatch });
 			return h(PlotScreen, { state, dispatch });
 		}

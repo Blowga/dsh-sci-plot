@@ -178,6 +178,50 @@
 			return pointsToPath(points);
 		}
 
+		/**
+		 * A standard card is a stick pattern, not a polyline. Drawing it as one path
+		 * would join peak n to peak n+1 with a diagonal across the whole range, so
+		 * each peak becomes its own vertical bar: baseline → scaled intensity.
+		 * `height` is the Y-units the card's strongest peak should occupy.
+		 */
+		function cardSticks(dataset, base, scales, height) {
+			const xs = dataset.xs;
+			const ys = dataset.ys;
+			let maxY = 0;
+			for (let i = 0; i < ys.length; i++) {
+				if (Number.isFinite(ys[i]) && ys[i] > maxY) maxY = ys[i];
+			}
+			if (!(maxY > 0) || !(height > 0)) return [];
+			const shift = Number.isFinite(base) ? base : 0;
+			const pyBase = scales.sy(shift);
+			if (!Number.isFinite(pyBase)) return [];
+			const out = [];
+			for (let i = 0; i < xs.length; i++) {
+				const x = xs[i];
+				const raw = ys[i];
+				if (!Number.isFinite(x) || !Number.isFinite(raw) || raw <= 0) continue;
+				const px = scales.sx(x);
+				const pyTop = scales.sy(shift + (raw / maxY) * height);
+				if (!Number.isFinite(px) || !Number.isFinite(pyTop)) continue;
+				out.push({ key: `${dataset.id}-${i}`, px, pyTop, pyBase });
+			}
+			return out;
+		}
+
+		/**
+		 * 卡片的两条水平分割线：下线 = 基线（yOffset），上线 = 基线 + cardHeight。
+		 * 返回像素坐标；任一映射不出来（例如 Y 轴取对数而基线 ≤ 0）时返回 null，
+		 * 此时不画线 —— 画不出来就没法拖。
+		 */
+		function cardSplitGeometry(offset, height, scales) {
+			const base = Number.isFinite(offset) ? offset : 0;
+			const tall = Number.isFinite(height) ? height : 0;
+			const pyBase = scales.sy(base);
+			const pyTop = scales.sy(base + tall);
+			if (!Number.isFinite(pyBase) || !Number.isFinite(pyTop)) return null;
+			return { pyBase, pyTop };
+		}
+
 		function svgLegend(list, offsets, scales, colors) {
 			const box = scales.box;
 			if (list.length === 0) return null;
@@ -298,8 +342,53 @@
 					{ "data-curves": "1", clipPath: "url(#sp-clip)" },
 					list.map((item) => {
 						const index = state.datasets.indexOf(item);
-						const path = curvePath(item, offsets[index] || 0, scales);
+						const offset = offsets[index] || 0;
 						const selected = state.selected === item.id;
+						if (item.kind === "card") {
+							const sticks = cardSticks(item, offset, scales, item.cardHeight || 0);
+							const nodes = [
+								h(
+									"g",
+									{ key: "sticks", "data-sticks": "1" },
+									sticks.map((stick) =>
+										h("line", {
+											key: stick.key,
+											"data-stick": "1",
+											x1: stick.px,
+											y1: stick.pyBase,
+											x2: stick.px,
+											y2: stick.pyTop,
+											stroke: item.color,
+											strokeWidth: selected ? (item.lineWidth || 2) + 0.4 : item.lineWidth || 2,
+											strokeLinecap: "butt",
+											opacity: selected ? 1 : 0.92
+										})
+									)
+								)
+							];
+							// 两条分割线是「视觉分隔」，导出时要保留 —— 因此不带
+							// data-interactive（serializeSvg 会剥掉那个属性所在的组），
+							// 命中判定在 bindStageEvents 里按几何位置另做。
+							const split = cardSplitGeometry(offset, item.cardHeight || 0, scales);
+							if (split !== null) {
+								const lineStyle = {
+									x1: box.left,
+									x2: box.left + box.width,
+									stroke: item.color,
+									strokeWidth: 1,
+									strokeDasharray: "5 4",
+									opacity: 0.72
+								};
+								nodes.push(
+									h("line", Object.assign({ key: "split-bottom", "data-split": "bottom", y1: split.pyBase, y2: split.pyBase }, lineStyle))
+								);
+								nodes.push(
+									h("line", Object.assign({ key: "split-top", "data-split": "top", y1: split.pyTop, y2: split.pyTop }, lineStyle))
+								);
+							}
+							return h("g", { key: item.id, "data-card": item.id }, nodes);
+						}
+						const path = curvePath(item, offset, scales);
 						return h("path", {
 							key: item.id,
 							d: path,

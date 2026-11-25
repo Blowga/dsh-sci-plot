@@ -243,6 +243,129 @@
 			};
 		}
 
+		/**
+		 * Cells from the start of the line that parse as numbers, stopping at the
+		 * first cell that does not. A card row is `25.281 3.5200 100.0 ( 1 0 1) …`:
+		 * the leading three are numbers and `( 1 0 1)` ends the run.
+		 */
+		function leadingNumbers(delim, line) {
+			const out = [];
+			for (const cell of delim.split(line)) {
+				const text = cell.trim();
+				if (text.length === 0) {
+					if (out.length > 0) break;
+					continue;
+				}
+				const value = num(text);
+				if (Number.isNaN(value)) break;
+				out.push(value);
+			}
+			return out;
+		}
+
+		/**
+		 * Which leading number is I(f)? PDF cards are ordered
+		 * `2θ d I(f) (hkl) θ 1/(2d) 2π/d n²`, so the third — unless a header line
+		 * above the table names an intensity column, which wins.
+		 */
+		function detectCardIntensityColumn(lines, startLine, delim, leadCount) {
+			const fallback = leadCount >= 3 ? 2 : 1;
+			for (let i = startLine - 1; i >= Math.max(0, startLine - 40); i--) {
+				const raw = lines[i];
+				if (raw === undefined || raw.trim().length === 0) continue;
+				const cells = delim
+					.split(raw)
+					.map((cell) => cell.trim())
+					.filter((cell) => cell.length > 0);
+				if (cells.length < 2) continue;
+				for (let c = 0; c < cells.length; c++) {
+					if (/^(i$|i\(|int$|intensity|强度|rel)/i.test(cells[c])) return Math.min(c, leadCount - 1);
+				}
+			}
+			return fallback;
+		}
+
+		/**
+		 * Parse an ICDD / PDF standard card.
+		 *
+		 * Cards carry a `( h k l)` column, so `(` and `1)` are not numbers and
+		 * `parseTable` — which requires every non-empty cell of a row to be a
+		 * number — rejects every single data row. Here a row qualifies as long as
+		 * its *leading* run of numeric cells is at least two long; whatever follows
+		 * the first non-numeric cell is ignored.
+		 *
+		 * @returns {{ok: boolean, xs?: Float64Array, ys?: Float64Array, rows?: number,
+		 *   cardNo?: (string|null), iColumn?: number, delimiter?: string, reason?: string}}
+		 */
+		function parseCardTable(text) {
+			const lines = splitLines(text);
+			const cardMatch = /PDF[#\s]*([0-9]{2}-[0-9]{3}-[0-9]{4})/i.exec(text);
+			const cardNo = cardMatch === null ? null : cardMatch[1];
+
+			let best = null;
+			for (let d = 0; d < DELIMS.length; d++) {
+				const delim = DELIMS[d];
+				let runStart = -1;
+				let runLen = 0;
+				let runLead = 0;
+				let bestRun = null;
+				for (let i = 0; i <= lines.length; i++) {
+					const line = i < lines.length ? lines[i] : "";
+					const lead = i < lines.length && line.trim().length > 0 ? leadingNumbers(delim, line) : null;
+					const usable = lead !== null && lead.length >= 2;
+					if (usable && lead.length === runLead) {
+						runLen += 1;
+						continue;
+					}
+					if (runLen >= 3) {
+						const candidate = { delim: delim.id, start: runStart, count: runLen, cols: runLead };
+						if (bestRun === null || betterRun(candidate, bestRun)) bestRun = candidate;
+					}
+					if (usable) {
+						runStart = i;
+						runLen = 1;
+						runLead = lead.length;
+					} else {
+						runStart = -1;
+						runLen = 0;
+						runLead = 0;
+					}
+				}
+				if (bestRun !== null && (best === null || betterRun(bestRun, best))) best = bestRun;
+			}
+			if (best === null) {
+				return { ok: false, reason: "找不到连续的标准卡片行（每行需至少 2 个以数字开头的列）" };
+			}
+
+			const delim = DELIMS.find((entry) => entry.id === best.delim);
+			if (delim === undefined) return { ok: false, reason: `未知分隔符：${best.delim}` };
+			const iColumn = detectCardIntensityColumn(lines, best.start, delim, best.cols);
+
+			const xs = [];
+			const ys = [];
+			for (let i = best.start; i < lines.length; i++) {
+				const line = lines[i];
+				if (line === undefined || line.trim().length === 0) continue;
+				const lead = leadingNumbers(delim, line);
+				if (lead.length < 2) continue;
+				const x = lead[0];
+				const y = iColumn < lead.length ? lead[iColumn] : lead[lead.length - 1];
+				if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+				xs.push(x);
+				ys.push(y);
+			}
+			if (xs.length < 2) return { ok: false, reason: `只找到 ${xs.length} 个峰位，至少需要 2 个` };
+			return {
+				ok: true,
+				xs: Float64Array.from(xs),
+				ys: Float64Array.from(ys),
+				rows: xs.length,
+				cardNo,
+				iColumn,
+				delimiter: best.delim
+			};
+		}
+
 		//#endregion
 
 		//#region pure — formula engine
@@ -696,6 +819,20 @@
 		/** `colN` for a 1-based column index. */
 		function colVar(index) {
 			return `col${index + 1}`;
+		}
+
+		/**
+		 * 原生 `<input type="color">` 的 value 只接受 `#rrggbb`（三位缩写与
+		 * rgb()/hsl() 都会被浏览器当成非法值吞掉），所以取色器开口前先归一化，
+		 * 不认识就退回默认色，保证 input 永远拿到合法值。
+		 */
+		function colorInputValue(color, fallback) {
+			const text = typeof color === "string" ? color.trim() : "";
+			const six = /^#([0-9a-fA-F]{6})$/.exec(text);
+			if (six !== null) return `#${six[1].toLowerCase()}`;
+			const three = /^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/.exec(text);
+			if (three !== null) return `#${three[1]}${three[1]}${three[2]}${three[2]}${three[3]}${three[3]}`.toLowerCase();
+			return fallback || PALETTE[0];
 		}
 		//#endregion
 		/* @pure-end */

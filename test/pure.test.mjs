@@ -38,7 +38,11 @@ const exported = [
 	"computeAutoView",
 	"reducer",
 	"initialState",
-	"FRAMES"
+	"FRAMES",
+	"serializeState",
+	"deserializeState",
+	"colorInputValue",
+	"nextId"
 ];
 
 const headText = readFileSync(join(srcDir, "00-head.js"), "utf8");
@@ -159,6 +163,119 @@ console.log("\n# reducer");
 
 	const cleared = api.reducer(added, { type: "CLEAR_ALL" });
 	check("CLEAR_ALL empties data and view", cleared.datasets.length === 0 && cleared.view === null && cleared.guides.length === 0);
+}
+
+console.log("\n# 批量偏移 / 状态持久化");
+{
+	// ---- SET_ALL_OFFSET_MODE：卡片不参与 ----
+	let s = api.reducer(api.initialState, { type: "OPEN_FRAME", frameId: "xrd" });
+	s = api.reducer(s, {
+		type: "ADD_DATASETS",
+		list: [
+			{ name: "a", xs: Float64Array.from([1, 2]), ys: Float64Array.from([1, 2]) },
+			{ name: "b", xs: Float64Array.from([1, 2]), ys: Float64Array.from([3, 4]) }
+		]
+	});
+	s = api.reducer(s, {
+		type: "ADD_CARD",
+		list: [{ name: "card", xs: Float64Array.from([10, 20]), ys: Float64Array.from([100, 40]), kind: "card" }]
+	});
+	const auto = api.reducer(s, { type: "SET_ALL_OFFSET_MODE", mode: "auto" });
+	check("SET_ALL_OFFSET_MODE auto 作用于普通曲线",
+		auto.datasets[0].offsetMode === "auto" && auto.datasets[1].offsetMode === "auto",
+		auto.datasets.map((item) => item.offsetMode).join(","));
+	check("SET_ALL_OFFSET_MODE 跳过卡片", auto.datasets[2].offsetMode === "manual" && auto.datasets[2].kind === "card");
+	check("SET_ALL_OFFSET_MODE 不动卡片的 yOffset / cardHeight",
+		auto.datasets[2].yOffset === s.datasets[2].yOffset && auto.datasets[2].cardHeight === s.datasets[2].cardHeight);
+	const offAll = api.reducer(auto, { type: "SET_ALL_OFFSET_MODE", mode: "off" });
+	check("SET_ALL_OFFSET_MODE off 生效", offAll.datasets[0].offsetMode === "off");
+	check("无变化时返回同一个 state", api.reducer(offAll, { type: "SET_ALL_OFFSET_MODE", mode: "off" }) === offAll);
+	check("非法 mode 被忽略", api.reducer(offAll, { type: "SET_ALL_OFFSET_MODE", mode: "xx" }) === offAll);
+
+	// ---- 序列化往返：Float64Array + NaN ----
+	const live = {
+		screen: "plot",
+		frameId: "xrd",
+		datasets: [
+			{
+				id: "ds1",
+				name: "spec",
+				xs: Float64Array.from([1, 2, 3]),
+				ys: Float64Array.from([1, NaN, 3]),
+				raw: { columns: [[1, 2, 3], [1, NaN, 3]], columnNames: [] },
+				color: "#6E8B9E",
+				visible: true,
+				lineWidth: 2,
+				yOffset: 0,
+				offsetMode: "off",
+				op: null,
+				source: "file"
+			}
+		],
+		guides: [{ id: "g1", x: 2.5, label: "", color: "#E0A030" }],
+		view: { xLo: 1, xHi: 3, yLo: 0, yHi: 4 },
+		axis: { xLabel: "2θ", yLabel: "Intensity", reverseX: false, yLog: false },
+		tool: "zoom",
+		selected: "ds1"
+	};
+	const text = api.serializeState(live);
+	const back = api.deserializeState(text);
+	check("序列化 → 反序列化可用", back !== null);
+	if (back !== null) {
+		check("xs / ys 恢复成 Float64Array", back.datasets[0].xs instanceof Float64Array && back.datasets[0].ys instanceof Float64Array);
+		check("点位与数值一致", back.datasets[0].xs[2] === 3 && back.datasets[0].ys[0] === 1);
+		check("NaN 恢复成 NaN（不会被 JSON 变成 0）", Number.isNaN(back.datasets[0].ys[1]));
+		check("view / axis / guides / selected 恢复",
+			back.view.yHi === 4 && back.axis.xLabel === "2θ" && back.guides[0].x === 2.5 && back.selected === "ds1");
+		check("screen / frameId / tool 恢复", back.screen === "plot" && back.frameId === "xrd" && back.tool === "zoom");
+		check("raw 不持久化", back.datasets[0].raw === null);
+		check("notice / dialog 不持久化", back.notice === null && back.dialog === null);
+		const added = api.reducer(back, {
+			type: "ADD_DATASETS",
+			list: [{ name: "new", xs: Float64Array.from([1, 2]), ys: Float64Array.from([1, 2]) }]
+		});
+		const ids = added.datasets.map((item) => item.id);
+		check("恢复后新 id 不与旧 id 撞车", new Set(ids).size === ids.length, ids.join(","));
+	}
+
+	// ---- 健壮性 ----
+	check("坏 JSON → null", api.deserializeState("{not json") === null);
+	check("版本不符 → null", api.deserializeState(JSON.stringify({ version: 999, state: {} })) === null);
+	check("空 state → null", api.deserializeState(JSON.stringify({ version: 1, state: null })) === null);
+	const dirty = api.deserializeState(JSON.stringify({
+		version: 1,
+		state: {
+			screen: "plot",
+			frameId: "nope",
+			datasets: [null, { id: "ds3", name: "", xs: "junk", ys: null, offsetMode: "weird" }],
+			guides: [{ x: "NaN?" }],
+			view: { xLo: 1, xHi: 1, yLo: 0, yHi: 1 },
+			axis: null,
+			tool: "bogus",
+			selected: "gone"
+		}
+	}));
+	check("脏数据不让面板白屏（帧名无效 → 回首页）", dirty !== null && dirty.screen === "home" && dirty.frameId === null);
+	check("脏数据：坏曲线留壳、坏点变空序列", dirty !== null && dirty.datasets.length === 1 && dirty.datasets[0].xs.length === 0);
+	check("脏数据：退化视口 → null，axis / tool 回默认", dirty !== null && dirty.view === null && dirty.axis.xLabel === "" && dirty.tool === "pan");
+	check("脏数据：悬空 selected → null", dirty !== null && dirty.selected === null);
+
+	// ---- 配额降级 ----
+	const light = api.deserializeState(api.serializeState(live, { light: true }));
+	check("降级写法丢掉 xs / ys 但保留视图与配色",
+		light !== null && light.datasets[0].xs.length === 0 && light.datasets[0].color === "#6E8B9E" && light.view.yHi === 4);
+	check("降级写法体积更小", api.serializeState(live, { light: true }).length < text.length);
+
+	// ---- CLEAR_ALL 之后持久化应为空 ----
+	const clearedBack = api.deserializeState(api.serializeState(api.reducer(live, { type: "CLEAR_ALL" })));
+	check("CLEAR_ALL 之后持久化里没有曲线",
+		clearedBack !== null && clearedBack.datasets.length === 0 && clearedBack.guides.length === 0 && clearedBack.view === null);
+
+	// ---- 取色器颜色归一化 ----
+	check("colorInputValue 认 hex", api.colorInputValue("#6E8B9E") === "#6e8b9e");
+	check("colorInputValue 展开三位缩写", api.colorInputValue("#abc") === "#aabbcc");
+	check("colorInputValue 对 rgb() 回退默认色", api.colorInputValue("rgb(1,2,3)") === JSON.parse(paletteMatch[1])[0]);
+	check("colorInputValue 支持自定义回退色", api.colorInputValue("", "#123456") === "#123456");
 }
 
 console.log("\n# real samples");

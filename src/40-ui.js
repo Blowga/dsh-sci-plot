@@ -24,13 +24,46 @@
 			};
 		}
 
-		async function readFileEntries(files) {
+		/** Standard card → card dataset. Intensity stays raw (0~100); the store scales it. */
+		function cardToDataset(name, card, source) {
+			if (!card || card.ok !== true) return null;
+			if (!card.xs || card.xs.length < 2) return null;
+			const fromName = /PDF[#\s]*([0-9]{2}-[0-9]{3}-[0-9]{4})/i.exec(String(name));
+			const cardNo = card.cardNo || (fromName === null ? null : fromName[1]);
+			const label = displayName(name);
+			const alreadyNamed = fromName !== null;
+			return {
+				name: cardNo === null || alreadyNamed ? label : `${label} (PDF#${cardNo})`,
+				xs: card.xs,
+				ys: card.ys,
+				kind: "card",
+				cardNo,
+				raw: null,
+				source: source || "file"
+			};
+		}
+
+		async function readFileEntries(files, cardMode) {
 			const ok = [];
 			const bad = [];
 			for (const file of files) {
 				try {
 					const bytes = new Uint8Array(await file.arrayBuffer());
 					const decoded = decodeBytes(bytes);
+					if (cardMode) {
+						const card = parseCardTable(decoded.text);
+						if (!card.ok) {
+							bad.push(`${file.name}：${card.reason}`);
+							continue;
+						}
+						const entry = cardToDataset(file.name, card, "file");
+						if (entry === null) {
+							bad.push(`${file.name}：卡片里没有可用的峰位`);
+							continue;
+						}
+						ok.push(entry);
+						continue;
+					}
 					const table = parseTable(decoded.text);
 					if (!table.ok) {
 						bad.push(`${file.name}：${table.reason}`);
@@ -51,7 +84,7 @@
 			return { ok, bad };
 		}
 
-		async function readPathEntry(path) {
+		async function readPathEntry(path, cardMode) {
 			const response = await fetch(READ_URL, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -64,21 +97,29 @@
 			}
 			const bytes = base64ToBytes(data.base64);
 			const decoded = decodeBytes(bytes);
+			const label = data.name || path;
+			if (cardMode) {
+				const card = parseCardTable(decoded.text);
+				if (!card.ok) throw new Error(card.reason);
+				const cardEntry = cardToDataset(label, card, "path");
+				if (cardEntry === null) throw new Error("卡片里没有可用的峰位");
+				return cardEntry;
+			}
 			const table = parseTable(decoded.text);
 			if (!table.ok) throw new Error(table.reason);
-			const entry = tableToDataset(data.name || path, table);
+			const entry = tableToDataset(label, table);
 			if (entry === null) throw new Error("没有可用的数值列");
 			entry.source = "path";
 			entry.hasHeader = table.columnNames.some((cell) => cell !== null);
 			return entry;
 		}
 
-		async function readPathEntries(paths) {
+		async function readPathEntries(paths, cardMode) {
 			const ok = [];
 			const bad = [];
 			for (const path of paths) {
 				try {
-					ok.push(await readPathEntry(path));
+					ok.push(await readPathEntry(path, cardMode));
 				} catch (error) {
 					bad.push(`${path}：${error && error.message ? error.message : "读取失败"}`);
 				}
@@ -86,9 +127,9 @@
 			return { ok, bad };
 		}
 
-		function loadInto(state, dispatch, result) {
+		function loadInto(state, dispatch, result, cardMode) {
 			if (result.ok.length > 0) {
-				dispatch({ type: "ADD_DATASETS", list: result.ok });
+				dispatch({ type: cardMode ? "ADD_CARD" : "ADD_DATASETS", list: result.ok });
 				if (result.bad.length > 0) {
 					dispatch({ type: "NOTICE", tone: "warn", text: `导入 ${result.ok.length} 条，跳过 ${result.bad.length} 条：${result.bad[0]}` });
 				}
@@ -273,16 +314,46 @@
 			const dispatch = props.dispatch;
 			const offsets = props.offsets;
 
+			// 取色器：原生 <input type="color"> 藏在行内（不可见、1px），
+			// 由色块触发 click() 打开系统取色面板。
+			const colorInputs = react.useRef({});
+			const openColor = (key) => {
+				const node = colorInputs.current[key];
+				if (node && typeof node.click === "function") node.click();
+			};
+			const colorInput = (key, color, onChange) =>
+				h("input", {
+					type: "color",
+					className: "sp_colorHidden",
+					tabIndex: -1,
+					"aria-hidden": "true",
+					value: colorInputValue(color, PALETTE[0]),
+					ref: (node) => {
+						if (node === null) delete colorInputs.current[key];
+						else colorInputs.current[key] = node;
+					},
+					onChange
+				});
+
 			const datasetRows = state.datasets.map((item, index) =>
 				h(
 					"div",
 					{ key: item.id, className: "sp_row" + (state.selected === item.id ? " sp_rowOn" : "") },
-					h("span", {
-						className: "sp_swatch",
-						style: { background: item.color },
-						onClick: () => dispatch({ type: "SELECT", id: item.id }),
-						title: "选中这条曲线"
-					}),
+					// 单击 = 选中（原有行为不变）；双击 = 改颜色。
+					h(
+						"span",
+						{
+							className: "sp_swatch",
+							style: { background: item.color },
+							onClick: () => dispatch({ type: "SELECT", id: item.id }),
+							onDoubleClick: () => openColor("ds:" + item.id),
+							title: "单击选中这条曲线 · 双击修改颜色"
+						},
+						h("span", { className: "sp_swatchMark" })
+					),
+					colorInput("ds:" + item.id, item.color, (event) =>
+						dispatch({ type: "PATCH_DATASET", id: item.id, patch: { color: event.target.value } })
+					),
 					h(
 						"button",
 						{
@@ -293,6 +364,9 @@
 						},
 						item.name
 					),
+					item.kind === "card"
+						? h("span", { className: "sp_badge", title: item.cardNo ? `PDF#${item.cardNo}` : "标准卡片" }, "卡片")
+						: null,
 					item.op ? h("span", { className: "sp_badge" }, item.op.label) : null,
 					h("input", {
 						type: "checkbox",
@@ -319,6 +393,30 @@
 					: h(
 							"div",
 							null,
+							h(
+								"div",
+								{ className: "sp_row" },
+								h(
+									"button",
+									{
+										type: "button",
+										className: "sp_btn",
+										title: "所有实测曲线改为自动堆叠（标准卡片不参与，它由两条分割线控制）",
+										onClick: () => dispatch({ type: "SET_ALL_OFFSET_MODE", mode: "auto" })
+									},
+									"全部自动堆叠"
+								),
+								h(
+									"button",
+									{
+										type: "button",
+										className: "sp_btn",
+										title: "所有实测曲线回到偏移 0（标准卡片不参与）",
+										onClick: () => dispatch({ type: "SET_ALL_OFFSET_MODE", mode: "off" })
+									},
+									"全部不偏移"
+								)
+							),
 							state.datasets.map((item) =>
 								h(
 									"div",
@@ -433,7 +531,20 @@
 							h(
 								"div",
 								{ key: guide.id, className: "sp_row" },
-								h("span", { className: "sp_swatch", style: { background: guide.color } }),
+								// 竖线的色块没有「选中」语义，单击直接开取色器。
+								h(
+									"span",
+									{
+										className: "sp_swatch",
+										style: { background: guide.color },
+										onClick: () => openColor("guide:" + guide.id),
+										title: "单击修改竖线颜色"
+									},
+									h("span", { className: "sp_swatchMark" })
+								),
+								colorInput("guide:" + guide.id, guide.color, (event) =>
+									dispatch({ type: "PATCH_GUIDE", id: guide.id, patch: { color: event.target.value } })
+								),
 								h("input", {
 									className: "sp_input",
 									type: "number",
