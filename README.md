@@ -6,17 +6,19 @@ Scientific plotting panel for [DeepSeek Harness](https://github.com/deepseek-ai)
 
 ## Install
 
-Harness ≥ `0.2.0-rc.2`. Install it from the plugin manager (Plugin panel → install bundle) with the package name:
+Harness ≥ `0.2.0-rc.2`. Install it from the plugin manager (Plugin panel → install bundle) with the repository URL:
 
 ```
-@blowga/dsh-sci-plot
+https://github.com/Blowga/dsh-sci-plot.git
 ```
 
 Or from the CLI, for a profile the desktop app does not own:
 
 ```bash
-dsh plugin --profile <profile> install @blowga/dsh-sci-plot
+dsh plugin --profile <profile> install https://github.com/Blowga/dsh-sci-plot.git
 ```
+
+`lib/` is committed, so the plugin runs without a build step.
 
 A 「科研绘图」 / "Scientific plots" icon appears in the sidebar. No configuration needed; no network requests, no telemetry.
 

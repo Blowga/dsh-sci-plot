@@ -4,19 +4,19 @@ DeepSeek Harness 的科研绘图面板：把仪器导出的原始数据文件拖
 
 ## 安装
 
-要求 Harness ≥ `0.2.0-rc.2`。在插件面板里安装 bundle，包名填：
+要求 Harness ≥ `0.2.0-rc.2`。在插件面板里安装 bundle，地址填仓库地址：
 
 ```
-@blowga/dsh-sci-plot
+https://github.com/Blowga/dsh-sci-plot.git
 ```
 
 或者命令行（用于桌面应用不独占的 profile）：
 
 ```bash
-dsh plugin --profile <profile> install @blowga/dsh-sci-plot
+dsh plugin --profile <profile> install https://github.com/Blowga/dsh-sci-plot.git
 ```
 
-侧栏出现「科研绘图」图标即可。不需要任何配置，不联网，不上报。
+`lib/` 已随仓库提交，装完直接可用，不需要再构建。侧栏出现「科研绘图」图标即可。不需要任何配置，不联网，不上报。
 
 ## 使用
 
